@@ -16,6 +16,13 @@ import { useStoryAnalytics }   from '@/hooks/useStoryAnalytics'
 export default function DeckClient({ deckId, blocks, title }) {
   const [isReady, setIsReady] = useState(false)
 
+  // Lock body scroll while the deck is mounted, restore on unmount.
+  // This keeps /create and other pages scrollable normally.
+  useEffect(() => {
+    document.body.setAttribute('data-deck', 'true')
+    return () => document.body.removeAttribute('data-deck')
+  }, [])
+
   // Slight delay so the mobile browser has finished its initial layout
   // before we mount the full animation stack — avoids a first-frame jank.
   useEffect(() => {

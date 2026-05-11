@@ -139,7 +139,7 @@ export default function CreatePage() {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <main className="min-h-screen bg-[#0f0f0f] flex flex-col items-center justify-start px-4 py-12">
+    <main className="min-h-screen bg-[#0f0f0f] flex flex-col items-center justify-start px-4 py-12 overflow-y-auto overscroll-y-auto">
 
       {/* Header */}
       <div className="w-full max-w-2xl mb-10">

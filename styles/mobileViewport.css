@@ -42,16 +42,25 @@
 }
 
 /* ─── Viewport Reset ──────────────────────────────────────────────────────── */
-/* Prevent overscroll and rubber-banding in iOS Safari */
+/* Only reset margins/padding globally — overflow stays scrollable for
+   non-deck pages (/create, /dashboard, etc).
+   The story-safe-container handles its own overflow lockdown. */
 
 html,
 body {
   margin: 0;
   padding: 0;
-  overflow: hidden;           /* clip body; story container handles its own scroll */
+}
+
+/* ─── Deck-mode body lock ─────────────────────────────────────────────────── */
+/* Applied via <body data-deck="true"> on the /d/[slug] page only.
+   Prevents the page from scrolling behind the fixed story container. */
+
+body[data-deck="true"] {
+  overflow: hidden;
   overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x pan-y; /* allow both axes — we handle direction in JS */
+  touch-action: pan-x pan-y;
 }
 
 /* ─── Safe Container ──────────────────────────────────────────────────────── */
