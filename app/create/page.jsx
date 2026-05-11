@@ -3,17 +3,21 @@
 /**
  * app/create/page.jsx — Deck Creation UI
  * ──────────────────────────────────────────────────────────────────────────────
- * Three states:
- *  1. IDLE     — form: title + format picker + content textarea + submit
- *  2. LOADING  — animated processing screen while /api/ingest runs
- *  3. SUCCESS  — share URL displayed with copy button + preview link
+ * Two input modes:
+ *  A. Upload — drag-and-drop or click to upload .pptx, .docx, .pdf
+ *  B. Paste  — type/paste Markdown or plain text
+ *
+ * Three display states:
+ *  1. IDLE     — input mode tabs + form
+ *  2. LOADING  — animated processing screen
+ *  3. SUCCESS  — share URL + copy button
  * ──────────────────────────────────────────────────────────────────────────────
  */
 
-import { useState, useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useState, useRef, useCallback } from 'react'
+import { motion, AnimatePresence }        from 'framer-motion'
 
-// ── Sample content so the user can try it immediately ─────────────────────
+// ── Sample content ────────────────────────────────────────────────────────────
 const SAMPLE_MARKDOWN = `# Your pitch in seconds
 
 ## The problem
@@ -38,41 +42,54 @@ Pitch Engine converts your content into a mobile-native story deck — tap throu
 [Book a demo](https://example.com/demo)
 `
 
-// ── Format options ─────────────────────────────────────────────────────────
 const FORMATS = [
   {
     value: 'markdown',
     label: 'Markdown',
-    hint: '# Headings → slides, - bullets → bullet points, > quotes → proof points',
+    hint: '# Headings → slides, - bullets → points, > quotes → proof',
   },
   {
     value: 'text',
     label: 'Plain text',
-    hint: 'Paste any text — the AI will structure it into slides for you',
+    hint: 'Paste any text — AI structures it into slides',
   },
 ]
 
-// ── Processing steps shown during loading ──────────────────────────────────
 const STEPS = [
-  'Parsing your content…',
+  'Reading your file…',
+  'Extracting content…',
   'Identifying story blocks…',
   'Condensing to mobile copy…',
   'Saving your deck…',
   'Generating share link…',
 ]
 
+const ACCEPTED = '.pptx,.docx,.pdf'
+const ACCEPTED_MIME = [
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/pdf',
+]
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function CreatePage() {
-  const [state, setState]     = useState('idle')   // 'idle' | 'loading' | 'success' | 'error'
+  const [mode, setMode]       = useState('upload')  // 'upload' | 'paste'
+  const [state, setState]     = useState('idle')     // 'idle' | 'loading' | 'success' | 'error'
   const [title, setTitle]     = useState('')
   const [format, setFormat]   = useState('markdown')
   const [content, setContent] = useState('')
-  const [result, setResult]   = useState(null)     // { deckId, slug, shareUrl }
+  const [file, setFile]       = useState(null)       // File object
+  const [dragOver, setDragOver] = useState(false)
+  const [result, setResult]   = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [step, setStep]       = useState(0)
   const [copied, setCopied]   = useState(false)
-  const stepTimer             = useRef(null)
 
-  // ── Animate through the loading steps ────────────────────────────────────
+  const fileInputRef = useRef(null)
+  const stepTimer    = useRef(null)
+
+  // ── Step animation ───────────────────────────────────────────────────────
   function startStepAnimation() {
     let i = 0
     setStep(0)
@@ -80,31 +97,67 @@ export default function CreatePage() {
       i += 1
       if (i < STEPS.length) setStep(i)
       else clearInterval(stepTimer.current)
-    }, 900)
+    }, 800)
   }
 
-  // ── Submit ────────────────────────────────────────────────────────────────
-  async function handleSubmit(e) {
-    e.preventDefault()
+  // ── File validation ──────────────────────────────────────────────────────
+  function validateFile(f) {
+    if (!f) return 'No file selected.'
+    const ext = f.name.split('.').pop().toLowerCase()
+    if (!['pptx', 'docx', 'pdf'].includes(ext)) {
+      return 'Only .pptx, .docx, and .pdf files are supported.'
+    }
+    if (f.size > 20 * 1024 * 1024) {
+      return 'File is too large. Maximum size is 20MB.'
+    }
+    return null
+  }
 
-    if (!content.trim()) return
+  // ── Drag and drop ────────────────────────────────────────────────────────
+  const handleDrop = useCallback((e) => {
+    e.preventDefault()
+    setDragOver(false)
+    const dropped = e.dataTransfer.files[0]
+    if (!dropped) return
+    const err = validateFile(dropped)
+    if (err) { setErrorMsg(err); setState('error'); return }
+    setFile(dropped)
+    setErrorMsg('')
+    setState('idle')
+  }, [])
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault()
+    setDragOver(true)
+  }, [])
+
+  const handleDragLeave = useCallback(() => setDragOver(false), [])
+
+  const handleFileInput = (e) => {
+    const selected = e.target.files?.[0]
+    if (!selected) return
+    const err = validateFile(selected)
+    if (err) { setErrorMsg(err); setState('error'); return }
+    setFile(selected)
+    setErrorMsg('')
+    setState('idle')
+  }
+
+  // ── Submit: file upload ──────────────────────────────────────────────────
+  async function handleUploadSubmit(e) {
+    e.preventDefault()
+    if (!file) return
 
     setState('loading')
     setErrorMsg('')
     startStepAnimation()
 
     try {
-      const res = await fetch('/api/ingest', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content:   content.trim(),
-          format,
-          title:     title.trim(),
-          transform: true,
-        }),
-      })
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('title', title.trim())
 
+      const res = await fetch('/api/upload', { method: 'POST', body: fd })
       clearInterval(stepTimer.current)
 
       if (!res.ok) {
@@ -122,7 +175,39 @@ export default function CreatePage() {
     }
   }
 
-  // ── Copy share URL ────────────────────────────────────────────────────────
+  // ── Submit: paste ────────────────────────────────────────────────────────
+  async function handlePasteSubmit(e) {
+    e.preventDefault()
+    if (!content.trim()) return
+
+    setState('loading')
+    setErrorMsg('')
+    startStepAnimation()
+
+    try {
+      const res = await fetch('/api/ingest', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: content.trim(), format, title: title.trim(), transform: true }),
+      })
+      clearInterval(stepTimer.current)
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || `Server error ${res.status}`)
+      }
+
+      const data = await res.json()
+      setResult(data)
+      setState('success')
+    } catch (err) {
+      clearInterval(stepTimer.current)
+      setErrorMsg(err.message || 'Something went wrong. Please try again.')
+      setState('error')
+    }
+  }
+
+  // ── Copy URL ─────────────────────────────────────────────────────────────
   async function copyUrl() {
     if (!result?.shareUrl) return
     await navigator.clipboard.writeText(result.shareUrl)
@@ -130,19 +215,25 @@ export default function CreatePage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // ── Load sample content ───────────────────────────────────────────────────
-  function loadSample() {
-    setContent(SAMPLE_MARKDOWN)
-    setFormat('markdown')
-    setTitle('Mobile Pitch Engine')
+  // ── Reset ────────────────────────────────────────────────────────────────
+  function reset() {
+    setState('idle')
+    setContent('')
+    setTitle('')
+    setFile(null)
+    setResult(null)
+    setErrorMsg('')
   }
+
+  // ── File type label ──────────────────────────────────────────────────────
+  const fileExt = file?.name.split('.').pop().toUpperCase()
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <main className="min-h-screen bg-[#0f0f0f] flex flex-col items-center justify-start px-4 py-12 overflow-y-auto overscroll-y-auto">
+    <main className="min-h-screen bg-[#0f0f0f] flex flex-col items-center justify-start px-4 py-12 overflow-y-auto">
 
       {/* Header */}
-      <div className="w-full max-w-2xl mb-10">
+      <div className="w-full max-w-2xl mb-8">
         <a href="/" className="text-white/30 hover:text-white/60 text-sm transition-colors">
           ← Pitch Engine
         </a>
@@ -150,24 +241,23 @@ export default function CreatePage() {
           Create a deck
         </h1>
         <p className="text-white/50 mt-2 text-base">
-          Paste your content below — we'll turn it into a mobile story deck.
+          Upload a file or paste your content — we'll turn it into a mobile story deck.
         </p>
       </div>
 
       <AnimatePresence mode="wait">
 
-        {/* ── IDLE: form ──────────────────────────────────────────────────── */}
+        {/* ── IDLE / ERROR: main form ──────────────────────────────────── */}
         {(state === 'idle' || state === 'error') && (
-          <motion.form
+          <motion.div
             key="form"
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -16 }}
             transition={{ duration: 0.25 }}
-            onSubmit={handleSubmit}
             className="w-full max-w-2xl flex flex-col gap-6"
           >
-            {/* Title */}
+            {/* Title input */}
             <div className="flex flex-col gap-2">
               <label className="text-white/60 text-sm font-medium" htmlFor="title">
                 Deck title <span className="text-white/30">(optional)</span>
@@ -177,94 +267,193 @@ export default function CreatePage() {
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Q3 Investor Update"
+                placeholder="e.g. Series A Pitch"
                 maxLength={80}
                 className="bg-white/5 border border-white/10 rounded-xl px-4 py-3
                            text-white placeholder-white/25 text-base
-                           focus:outline-none focus:border-indigo-500/60
-                           transition-colors"
+                           focus:outline-none focus:border-indigo-500/60 transition-colors"
               />
             </div>
 
-            {/* Format picker */}
-            <div className="flex flex-col gap-2">
-              <span className="text-white/60 text-sm font-medium">Content format</span>
-              <div className="grid grid-cols-2 gap-3">
-                {FORMATS.map((f) => (
-                  <button
-                    key={f.value}
-                    type="button"
-                    onClick={() => setFormat(f.value)}
-                    className={[
-                      'flex flex-col gap-1 text-left p-4 rounded-xl border transition-all',
-                      format === f.value
-                        ? 'border-indigo-500/70 bg-indigo-500/10 text-white'
-                        : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20',
-                    ].join(' ')}
-                  >
-                    <span className="font-semibold text-sm">{f.label}</span>
-                    <span className="text-xs leading-relaxed opacity-70">{f.hint}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Content textarea */}
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <label className="text-white/60 text-sm font-medium" htmlFor="content">
-                  Content
-                </label>
+            {/* Mode tabs */}
+            <div className="flex gap-2 p-1 bg-white/5 rounded-xl border border-white/10">
+              {[
+                { id: 'upload', label: '↑ Upload file', sub: 'PPTX · DOCX · PDF' },
+                { id: 'paste',  label: '✎ Paste text',  sub: 'Markdown · Plain text' },
+              ].map((tab) => (
                 <button
+                  key={tab.id}
                   type="button"
-                  onClick={loadSample}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                  onClick={() => { setMode(tab.id); setState('idle'); setErrorMsg('') }}
+                  className={[
+                    'flex-1 flex flex-col items-center py-3 rounded-lg text-sm font-semibold transition-all',
+                    mode === tab.id
+                      ? 'bg-indigo-500/20 text-white border border-indigo-500/40'
+                      : 'text-white/40 hover:text-white/60',
+                  ].join(' ')}
                 >
-                  Load sample ↗
+                  {tab.label}
+                  <span className="text-xs font-normal opacity-60 mt-0.5">{tab.sub}</span>
                 </button>
-              </div>
-              <textarea
-                id="content"
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder={
-                  format === 'markdown'
-                    ? '# Your headline\n\n## A key point\n- Bullet one\n- Bullet two\n\n> A proof point — Source'
-                    : 'Paste any text here — a brief, a doc, a script…'
-                }
-                rows={14}
-                required
-                className="bg-white/5 border border-white/10 rounded-xl px-4 py-3
-                           text-white placeholder-white/20 text-sm font-mono leading-relaxed
-                           focus:outline-none focus:border-indigo-500/60
-                           transition-colors resize-none"
-              />
-              <p className="text-white/25 text-xs text-right">
-                {content.length.toLocaleString()} chars
-              </p>
+              ))}
             </div>
 
-            {/* Error message */}
-            {state === 'error' && (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
-                <p className="text-red-400 text-sm">{errorMsg}</p>
-              </div>
+            {/* ── Upload zone ─────────────────────────────────────────── */}
+            {mode === 'upload' && (
+              <form onSubmit={handleUploadSubmit} className="flex flex-col gap-4">
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={[
+                    'relative flex flex-col items-center justify-center gap-3',
+                    'rounded-2xl border-2 border-dashed cursor-pointer',
+                    'transition-all py-14 px-6 text-center',
+                    dragOver
+                      ? 'border-indigo-500 bg-indigo-500/10'
+                      : file
+                      ? 'border-emerald-500/50 bg-emerald-500/5'
+                      : 'border-white/15 bg-white/3 hover:border-white/30 hover:bg-white/5',
+                  ].join(' ')}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={ACCEPTED}
+                    onChange={handleFileInput}
+                    className="sr-only"
+                  />
+
+                  {file ? (
+                    <>
+                      {/* File selected state */}
+                      <div className="w-14 h-14 rounded-xl bg-emerald-500/15 border border-emerald-500/30
+                                      flex items-center justify-center text-emerald-400 text-xs font-bold tracking-widest">
+                        {fileExt}
+                      </div>
+                      <div>
+                        <p className="text-white font-semibold text-sm">{file.name}</p>
+                        <p className="text-white/40 text-xs mt-1">
+                          {(file.size / 1024 / 1024).toFixed(2)}MB — click to change
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Empty state */}
+                      <div className="w-14 h-14 rounded-xl bg-white/5 border border-white/10
+                                      flex items-center justify-center text-2xl text-white/30">
+                        ↑
+                      </div>
+                      <div>
+                        <p className="text-white/70 font-medium text-sm">
+                          Drop your file here, or click to browse
+                        </p>
+                        <p className="text-white/30 text-xs mt-1">
+                          PowerPoint (.pptx) · Word (.docx) · PDF — max 20MB
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Error */}
+                {state === 'error' && errorMsg && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
+                    <p className="text-red-400 text-sm">{errorMsg}</p>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={!file}
+                  className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-30
+                             disabled:cursor-not-allowed transition-colors
+                             text-white font-bold text-base py-4 rounded-xl"
+                >
+                  Convert to deck →
+                </button>
+              </form>
             )}
 
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={!content.trim()}
-              className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-30
-                         disabled:cursor-not-allowed transition-colors
-                         text-white font-bold text-base py-4 rounded-xl"
-            >
-              Create deck →
-            </button>
-          </motion.form>
+            {/* ── Paste zone ──────────────────────────────────────────── */}
+            {mode === 'paste' && (
+              <form onSubmit={handlePasteSubmit} className="flex flex-col gap-4">
+
+                {/* Format picker */}
+                <div className="grid grid-cols-2 gap-3">
+                  {FORMATS.map((f) => (
+                    <button
+                      key={f.value}
+                      type="button"
+                      onClick={() => setFormat(f.value)}
+                      className={[
+                        'flex flex-col gap-1 text-left p-4 rounded-xl border transition-all',
+                        format === f.value
+                          ? 'border-indigo-500/70 bg-indigo-500/10 text-white'
+                          : 'border-white/10 bg-white/5 text-white/50 hover:border-white/20',
+                      ].join(' ')}
+                    >
+                      <span className="font-semibold text-sm">{f.label}</span>
+                      <span className="text-xs leading-relaxed opacity-70">{f.hint}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Textarea */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-white/60 text-sm font-medium" htmlFor="content">Content</label>
+                    <button
+                      type="button"
+                      onClick={() => { setContent(SAMPLE_MARKDOWN); setFormat('markdown') }}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                      Load sample ↗
+                    </button>
+                  </div>
+                  <textarea
+                    id="content"
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    placeholder={
+                      format === 'markdown'
+                        ? '# Your headline\n\n## A key point\n- Bullet one\n- Bullet two\n\n> A proof point — Source'
+                        : 'Paste any text here — a brief, a doc, notes…'
+                    }
+                    rows={14}
+                    required
+                    className="bg-white/5 border border-white/10 rounded-xl px-4 py-3
+                               text-white placeholder-white/20 text-sm font-mono leading-relaxed
+                               focus:outline-none focus:border-indigo-500/60
+                               transition-colors resize-none"
+                  />
+                  <p className="text-white/25 text-xs text-right">{content.length.toLocaleString()} chars</p>
+                </div>
+
+                {/* Error */}
+                {state === 'error' && errorMsg && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
+                    <p className="text-red-400 text-sm">{errorMsg}</p>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={!content.trim()}
+                  className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-30
+                             disabled:cursor-not-allowed transition-colors
+                             text-white font-bold text-base py-4 rounded-xl"
+                >
+                  Create deck →
+                </button>
+              </form>
+            )}
+          </motion.div>
         )}
 
-        {/* ── LOADING ─────────────────────────────────────────────────────── */}
+        {/* ── LOADING ─────────────────────────────────────────────────── */}
         {state === 'loading' && (
           <motion.div
             key="loading"
@@ -274,14 +463,11 @@ export default function CreatePage() {
             transition={{ duration: 0.2 }}
             className="w-full max-w-2xl flex flex-col items-center gap-8 py-16"
           >
-            {/* Spinner */}
             <div className="relative w-16 h-16">
               <div className="absolute inset-0 rounded-full border-2 border-white/10" />
               <div className="absolute inset-0 rounded-full border-2 border-transparent
                               border-t-indigo-500 animate-spin" />
             </div>
-
-            {/* Animated step list */}
             <div className="flex flex-col gap-3 w-full max-w-xs">
               {STEPS.map((s, i) => (
                 <div
@@ -293,9 +479,7 @@ export default function CreatePage() {
                     i > step  ? 'text-white/15'  : '',
                   ].join(' ')}
                 >
-                  <span className="text-base">
-                    {i < step ? '✓' : i === step ? '›' : '·'}
-                  </span>
+                  <span className="text-base">{i < step ? '✓' : i === step ? '›' : '·'}</span>
                   {s}
                 </div>
               ))}
@@ -303,7 +487,7 @@ export default function CreatePage() {
           </motion.div>
         )}
 
-        {/* ── SUCCESS ─────────────────────────────────────────────────────── */}
+        {/* ── SUCCESS ─────────────────────────────────────────────────── */}
         {state === 'success' && result && (
           <motion.div
             key="success"
@@ -312,23 +496,17 @@ export default function CreatePage() {
             transition={{ duration: 0.3 }}
             className="w-full max-w-2xl flex flex-col gap-6"
           >
-            {/* Tick */}
             <div className="flex flex-col items-center gap-3 py-6">
               <div className="w-14 h-14 rounded-full bg-emerald-500/15 border border-emerald-500/30
-                              flex items-center justify-center text-2xl">
-                ✓
-              </div>
+                              flex items-center justify-center text-2xl">✓</div>
               <h2 className="text-2xl font-bold text-white">Deck created</h2>
               <p className="text-white/50 text-sm">
-                Your story deck is live and ready to share.
+                {result.slideCount} slides · ready to share
               </p>
             </div>
 
-            {/* Share URL box */}
             <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center gap-3">
-              <p className="flex-1 text-white text-sm font-mono truncate">
-                {result.shareUrl}
-              </p>
+              <p className="flex-1 text-white text-sm font-mono truncate">{result.shareUrl}</p>
               <button
                 onClick={copyUrl}
                 className={[
@@ -342,37 +520,31 @@ export default function CreatePage() {
               </button>
             </div>
 
-            {/* Action buttons */}
             <div className="grid grid-cols-2 gap-3">
               <a
                 href={result.shareUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2
-                           bg-white text-black font-bold py-3 rounded-xl
-                           hover:bg-white/90 transition-colors text-sm"
+                className="flex items-center justify-center gap-2 bg-white text-black
+                           font-bold py-3 rounded-xl hover:bg-white/90 transition-colors text-sm"
               >
                 Open deck ↗
               </a>
               <button
-                onClick={() => {
-                  setState('idle')
-                  setContent('')
-                  setTitle('')
-                  setResult(null)
-                }}
-                className="flex items-center justify-center
-                           border border-white/15 text-white/60 font-medium py-3 rounded-xl
+                onClick={reset}
+                className="flex items-center justify-center border border-white/15
+                           text-white/60 font-medium py-3 rounded-xl
                            hover:border-white/30 hover:text-white transition-all text-sm"
               >
                 Create another
               </button>
             </div>
 
-            {/* Deck metadata */}
             <div className="border-t border-white/10 pt-4 flex gap-6 text-xs text-white/30">
               <span>Slug: <span className="text-white/50 font-mono">{result.slug}</span></span>
-              <span>ID: <span className="text-white/50 font-mono">{result.deckId?.slice(0, 8)}…</span></span>
+              {result.sourceFile && (
+                <span>Source: <span className="text-white/50 font-mono">{result.sourceFile}</span></span>
+              )}
             </div>
           </motion.div>
         )}
