@@ -1,16 +1,19 @@
 /**
  * app/page.jsx — Home / landing page
  * Hero section using Aceternity UI ContainerScroll animation.
- * The 3D card reveals a product preview image on scroll.
+ * Server component — ContainerScroll handles its own "use client" boundary.
  */
-"use client";
 
 import { ContainerScroll } from "@/components/ui/container-scroll-animation";
-import Image from "next/image";
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-[#0f0f0f] overflow-x-hidden">
+    /*
+      No overflow-x-hidden here — setting overflow-x: hidden on a parent
+      can implicitly convert overflow-y to "auto", which clips the page
+      scroll that ContainerScroll depends on.
+    */
+    <main className="min-h-screen bg-[#0f0f0f]">
       <ContainerScroll
         titleComponent={
           <div className="flex flex-col items-center gap-4">
@@ -35,6 +38,7 @@ export default function Home() {
         }
       >
         {/* Product preview inside the 3D scroll card */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="https://images.unsplash.com/photo-1551650975-87deedd944c3?w=1200&q=80&auto=format&fit=crop"
           alt="Mobile pitch deck preview"
