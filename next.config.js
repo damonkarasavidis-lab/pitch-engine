@@ -9,7 +9,9 @@ const nextConfig = {
 
   // Required for @vercel/og (OG image generation)
   experimental: {
-    serverComponentsExternalPackages: ['@anthropic-ai/sdk'],
+    // Keep these packages out of the webpack bundle so they run as native Node
+    // modules. pdf-parse needs this to avoid its test-file auto-require issue.
+    serverComponentsExternalPackages: ['@anthropic-ai/sdk', 'pdf-parse'],
   },
 }
 
