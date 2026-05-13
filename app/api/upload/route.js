@@ -20,12 +20,7 @@ import { summariseText }   from '@/lib/llmTransformer'
 import { parseContent }    from '@/lib/contentParser'
 import { generateSlug }    from '@/lib/slugify'
 
-// Increase Next.js body size limit for file uploads
-export const config = {
-  api: { bodyParser: false },
-}
-
-// 20MB limit
+// 20MB limit — App Router reads the body as a stream; no bodyParser config needed
 export const maxDuration = 60  // Vercel: allow up to 60s for large files + LLM
 
 const supabase = createClient(
