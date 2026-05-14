@@ -16,7 +16,7 @@
 import { createClient }    from '@supabase/supabase-js'
 import { NextResponse }    from 'next/server'
 import { extractFile }     from '@/lib/fileExtractor'
-import { summariseText }   from '@/lib/llmTransformer'
+import { summarisePitch }  from '@/lib/llmTransformer'
 import { parseContent }    from '@/lib/contentParser'
 import { generateSlug }    from '@/lib/slugify'
 
@@ -67,15 +67,14 @@ export async function POST(request) {
   // ── 4. Use file title if none provided ───────────────────────────────────
   const deckTitle = (title.trim() || extracted.title || 'Untitled Deck').slice(0, 80)
 
-  // ── 5. Summarise into story blocks via LLM ───────────────────────────────
+  // ── 5. Extract investor signals via LLM ─────────────────────────────────
+  // Uses the investor-focused framework (team, problem, market, traction, etc.)
+  // Max 10 slides — only what investors actually care about.
   let rawSlides
   try {
-    rawSlides = await summariseText(extracted.text, {
-      maxSlides: Math.min(Math.max(extracted.slideCount, 5), 12),
-      deckTopic: deckTitle,
-    })
+    rawSlides = await summarisePitch(extracted.text, { deckTopic: deckTitle })
   } catch (err) {
-    console.warn('[upload] LLM summarise failed, falling back to raw parse:', err.message)
+    console.warn('[upload] LLM pitch extraction failed, falling back to raw parse:', err.message)
     rawSlides = null
   }
 
