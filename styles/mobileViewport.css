@@ -60,7 +60,8 @@ body[data-deck="true"] {
   overflow: hidden;
   overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x pan-y;
+  touch-action: pan-y;   /* allow vertical pan so swipe-up gesture reaches the card */
+  background: #ffffff;
 }
 
 /* ─── Safe Container ──────────────────────────────────────────────────────── */

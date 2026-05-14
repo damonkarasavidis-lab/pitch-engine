@@ -2,102 +2,76 @@
 
 /**
  * StoryRenderer.jsx
- * ─────────────────────────────────────────────────────────────────────────────
- * Renders a mobile-native "story deck" from an array of StoryBlock objects.
- *
- * Features:
- *  • Full-viewport-height sections (100dvh — dynamic viewport unit)
- *  • Segmented progress bar at the top
- *  • Tap-left / tap-right to advance (Instagram Stories pattern)
- *  • Scroll-to-advance (IntersectionObserver drives active index)
- *  • Framer Motion slide-over transitions
- *  • "Safe Zone" insets respecting iOS/Android browser chrome
- *  • Analytics hooks (onSlideEnter / onSlideExit callbacks)
- *
- * Usage:
- *  <StoryRenderer
- *    blocks={storyBlocks}
- *    onSlideEnter={(index, ts) => {}}
- *    onSlideExit={(index, ts, dwellMs) => {}}
- *  />
- * ─────────────────────────────────────────────────────────────────────────────
+ * Vertical swipe navigation (swipe up = next, swipe down = prev).
+ * No tap zones — gesture-only on mobile, keyboard + buttons on desktop.
  */
 
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import StoryBlock from './StoryBlock'
 
-// ─── Transition variants ────────────────────────────────────────────────────
+// ─── Vertical transition variants ─────────────────────────────────────────────
 
 const slideVariants = {
   enter: (direction) => ({
-    x: direction > 0 ? '100%' : '-100%',
+    y: direction > 0 ? '100%' : '-100%',
     opacity: 0,
   }),
   center: {
-    x: 0,
+    y: 0,
     opacity: 1,
   },
   exit: (direction) => ({
-    x: direction < 0 ? '100%' : '-100%',
+    y: direction < 0 ? '100%' : '-100%',
     opacity: 0,
   }),
 }
 
 const transition = {
-  x: { type: 'spring', stiffness: 300, damping: 30 },
-  opacity: { duration: 0.15 },
+  y: { type: 'spring', stiffness: 280, damping: 32 },
+  opacity: { duration: 0.18 },
 }
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+const SWIPE_THRESHOLD = 40  // px needed to register a swipe
 
-const TAP_ZONE_THRESHOLD = 0.35  // left 35% = prev, right 65% = next
-const SWIPE_THRESHOLD    = 50    // px required to register a swipe
-const LONG_PRESS_MS      = 500   // hold to pause auto-advance (future)
-
-// ─── Main Component ──────────────────────────────────────────────────────────
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function StoryRenderer({
   blocks = [],
-  autoAdvanceMs = null,      // null = no auto-advance; number = interval ms
+  autoAdvanceMs = null,
   onSlideEnter = () => {},
   onSlideExit  = () => {},
   onComplete   = () => {},
 }) {
   const [activeIndex, setActiveIndex] = useState(0)
-  const [direction, setDirection]     = useState(1)   // 1 = forward, -1 = back
+  const [direction, setDirection]     = useState(1)
   const [isPaused, setIsPaused]       = useState(false)
 
   const containerRef  = useRef(null)
-  const slideRefs     = useRef([])
   const enterTimeRef  = useRef(Date.now())
   const touchStartRef = useRef({ x: 0, y: 0, time: 0 })
   const autoTimerRef  = useRef(null)
 
   const total = blocks.length
 
-  // ─── Navigation helpers ────────────────────────────────────────────────────
+  // ─── Navigation ─────────────────────────────────────────────────────────────
 
   const goTo = useCallback((nextIndex) => {
     if (nextIndex < 0 || nextIndex >= total) return
-
     const now     = Date.now()
     const dwellMs = now - enterTimeRef.current
-
     onSlideExit(activeIndex, now, dwellMs)
-
     setDirection(nextIndex > activeIndex ? 1 : -1)
     setActiveIndex(nextIndex)
     enterTimeRef.current = now
     onSlideEnter(nextIndex, now)
-
     if (nextIndex === total - 1) onComplete()
   }, [activeIndex, total, onSlideEnter, onSlideExit, onComplete])
 
   const goNext = useCallback(() => goTo(activeIndex + 1), [activeIndex, goTo])
   const goPrev = useCallback(() => goTo(activeIndex - 1), [activeIndex, goTo])
 
-  // ─── Auto-advance timer ────────────────────────────────────────────────────
+  // ─── Auto-advance ────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!autoAdvanceMs || isPaused) return
@@ -105,7 +79,7 @@ export default function StoryRenderer({
     return () => clearTimeout(autoTimerRef.current)
   }, [activeIndex, autoAdvanceMs, isPaused, goNext])
 
-  // ─── Announce entry of slide 0 on mount ───────────────────────────────────
+  // ─── Mount: fire slide 0 enter ───────────────────────────────────────────────
 
   useEffect(() => {
     enterTimeRef.current = Date.now()
@@ -113,94 +87,43 @@ export default function StoryRenderer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ─── Tap handler: left zone = prev, right zone = next ─────────────────────
-
-  const handleTap = useCallback((e) => {
-    // Ignore taps on interactive elements (buttons, links, inputs)
-    if (e.target.closest('a, button, input, textarea, select')) return
-
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return
-
-    const relativeX = (e.clientX - rect.left) / rect.width
-    if (relativeX <= TAP_ZONE_THRESHOLD) {
-      goPrev()
-    } else {
-      goNext()
-    }
-  }, [goNext, goPrev])
-
-  // ─── Touch / swipe handler ────────────────────────────────────────────────
+  // ─── Touch: vertical swipe ───────────────────────────────────────────────────
 
   const handleTouchStart = useCallback((e) => {
-    const touch = e.touches[0]
-    touchStartRef.current = {
-      x:    touch.clientX,
-      y:    touch.clientY,
-      time: Date.now(),
-    }
+    const t = e.touches[0]
+    touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() }
     setIsPaused(true)
   }, [])
 
   const handleTouchEnd = useCallback((e) => {
     setIsPaused(false)
-    const touch = e.changedTouches[0]
-    const dx = touch.clientX - touchStartRef.current.x
-    const dy = touch.clientY - touchStartRef.current.y
-    const elapsed = Date.now() - touchStartRef.current.time
+    const t  = e.changedTouches[0]
+    const dx = t.clientX - touchStartRef.current.x
+    const dy = t.clientY - touchStartRef.current.y
 
-    // Horizontal swipe wins over vertical scroll
-    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > SWIPE_THRESHOLD) {
-      dx < 0 ? goNext() : goPrev()
-      return
-    }
-
-    // Short tap (no significant movement, <300 ms)
-    if (elapsed < 300 && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
-      const rect = containerRef.current?.getBoundingClientRect()
-      if (!rect) return
-      const relX = (touch.clientX - rect.left) / rect.width
-      relX <= TAP_ZONE_THRESHOLD ? goPrev() : goNext()
+    // Only handle if vertical motion dominates
+    if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > SWIPE_THRESHOLD) {
+      dy < 0 ? goNext() : goPrev()
     }
   }, [goNext, goPrev])
 
-  // ─── Keyboard navigation ──────────────────────────────────────────────────
+  // ─── Keyboard navigation ─────────────────────────────────────────────────────
 
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goNext()
-      if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   goPrev()
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') goNext()
+      if (e.key === 'ArrowUp'   || e.key === 'ArrowLeft')  goPrev()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [goNext, goPrev])
 
-  // ─── Scroll-to-advance (IntersectionObserver) ─────────────────────────────
-  // Each slide section is observed; when it crosses 60% visibility it becomes active.
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const idx = Number(entry.target.dataset.index)
-            if (idx !== activeIndex) goTo(idx)
-          }
-        })
-      },
-      { threshold: 0.6 }
-    )
-
-    slideRefs.current.forEach((el) => el && observer.observe(el))
-    return () => observer.disconnect()
-  }, [activeIndex, goTo, total])
-
-  // ─── Render ───────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────────
 
   if (!blocks.length) {
     return (
-      <div className="story-safe-container flex items-center justify-center bg-black text-white">
-        <p className="text-lg opacity-50">No story blocks to display.</p>
+      <div className="story-safe-container flex items-center justify-center bg-[#fafafa]">
+        <p className="text-base text-gray-400">No slides to display.</p>
       </div>
     )
   }
@@ -209,24 +132,15 @@ export default function StoryRenderer({
     <div
       ref={containerRef}
       className="story-safe-container relative overflow-hidden select-none"
-      onClick={handleTap}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       aria-label="Story deck"
       role="region"
     >
-      {/* ── Segmented Progress Bar ─────────────────────────────────────────── */}
-      <ProgressBar
-        total={total}
-        activeIndex={activeIndex}
-        autoAdvanceMs={autoAdvanceMs}
-        isPaused={isPaused}
-      />
+      {/* Right-side dot progress indicator */}
+      <DotProgress total={total} activeIndex={activeIndex} />
 
-      {/* ── Tap Zone Hint Overlay (shown briefly on first load) ────────────── */}
-      <TapHintOverlay />
-
-      {/* ── Slide Carousel ────────────────────────────────────────────────── */}
+      {/* Slide carousel */}
       <div className="relative w-full h-full">
         <AnimatePresence initial={false} custom={direction} mode="popLayout">
           <motion.div
@@ -238,12 +152,12 @@ export default function StoryRenderer({
             exit="exit"
             transition={transition}
             className="absolute inset-0"
-            drag="x"
-            dragConstraints={{ left: 0, right: 0 }}
-            dragElastic={0.1}
+            drag="y"
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={0.07}
             onDragEnd={(_, info) => {
-              if (info.offset.x < -SWIPE_THRESHOLD) goNext()
-              if (info.offset.x >  SWIPE_THRESHOLD) goPrev()
+              if (info.offset.y < -SWIPE_THRESHOLD) goNext()
+              if (info.offset.y >  SWIPE_THRESHOLD) goPrev()
             }}
           >
             <StoryBlock
@@ -255,21 +169,11 @@ export default function StoryRenderer({
         </AnimatePresence>
       </div>
 
-      {/* ── Invisible scroll-target sections (for IntersectionObserver) ──── */}
-      {/* Hidden off-screen; used only when the container is in scroll mode  */}
-      <div className="story-scroll-sentinel" aria-hidden="true">
-        {blocks.map((_, i) => (
-          <div
-            key={i}
-            ref={(el) => (slideRefs.current[i] = el)}
-            data-index={i}
-            className="story-scroll-slide"
-          />
-        ))}
-      </div>
+      {/* "Swipe up" hint on first slide */}
+      {activeIndex === 0 && <SwipeHint />}
 
-      {/* ── Navigation chevrons (desktop / a11y) ──────────────────────────── */}
-      <NavChevrons
+      {/* Desktop up/down buttons */}
+      <DesktopNav
         onPrev={goPrev}
         onNext={goNext}
         showPrev={activeIndex > 0}
@@ -279,45 +183,39 @@ export default function StoryRenderer({
   )
 }
 
-// ─── ProgressBar Component ────────────────────────────────────────────────────
+// ─── Right-side dot progress ──────────────────────────────────────────────────
 
-function ProgressBar({ total, activeIndex, autoAdvanceMs, isPaused }) {
+function DotProgress({ total, activeIndex }) {
   return (
     <div
-      className="story-progress-bar"
+      className="absolute right-4 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-1.5"
+      aria-label={`Slide ${activeIndex + 1} of ${total}`}
       role="progressbar"
       aria-valuenow={activeIndex + 1}
       aria-valuemax={total}
-      aria-label={`Slide ${activeIndex + 1} of ${total}`}
     >
       {Array.from({ length: total }).map((_, i) => (
-        <div key={i} className="story-progress-segment">
-          <div
-            className={[
-              'story-progress-fill',
-              i < activeIndex  ? 'story-progress-complete' : '',
-              i === activeIndex ? 'story-progress-active'   : '',
-            ].join(' ')}
-            style={
-              i === activeIndex && autoAdvanceMs && !isPaused
-                ? { animationDuration: `${autoAdvanceMs}ms` }
-                : {}
-            }
-          />
-        </div>
+        <div
+          key={i}
+          className="rounded-full transition-all duration-300"
+          style={{
+            width:           i === activeIndex ? 6 : 4,
+            height:          i === activeIndex ? 6 : 4,
+            backgroundColor: i === activeIndex ? '#111111' : 'rgba(0,0,0,0.2)',
+          }}
+        />
       ))}
     </div>
   )
 }
 
-// ─── TapHintOverlay Component ─────────────────────────────────────────────────
-// Fades in for 2s on first render to teach the tap-to-advance gesture.
+// ─── Swipe up hint ────────────────────────────────────────────────────────────
 
-function TapHintOverlay() {
+function SwipeHint() {
   const [visible, setVisible] = useState(true)
 
   useEffect(() => {
-    const t = setTimeout(() => setVisible(false), 2200)
+    const t = setTimeout(() => setVisible(false), 2500)
     return () => clearTimeout(t)
   }, [])
 
@@ -325,41 +223,54 @@ function TapHintOverlay() {
 
   return (
     <motion.div
-      className="story-tap-hint"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
+      className="absolute bottom-10 left-0 right-0 flex flex-col items-center gap-1 z-50 pointer-events-none"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
-      transition={{ delay: 0.4, duration: 0.5 }}
+      transition={{ delay: 0.6, duration: 0.5 }}
       aria-hidden="true"
     >
-      <span className="story-tap-hint-left">‹ Prev</span>
-      <span className="story-tap-hint-right">Next ›</span>
+      <motion.div
+        animate={{ y: [0, -5, 0] }}
+        transition={{ repeat: Infinity, duration: 1.2, ease: 'easeInOut' }}
+        className="text-gray-400 text-xl"
+      >
+        ↑
+      </motion.div>
+      <span className="text-xs font-medium text-gray-400 tracking-widest uppercase">
+        Swipe up
+      </span>
     </motion.div>
   )
 }
 
-// ─── NavChevrons Component ────────────────────────────────────────────────────
-// Visible on desktop hover; hidden on touch devices via CSS.
+// ─── Desktop nav ──────────────────────────────────────────────────────────────
 
-function NavChevrons({ onPrev, onNext, showPrev, showNext }) {
+function DesktopNav({ onPrev, onNext, showPrev, showNext }) {
   return (
     <>
       {showPrev && (
         <button
-          onClick={(e) => { e.stopPropagation(); onPrev() }}
-          className="story-nav-chevron story-nav-chevron--left"
+          onClick={onPrev}
+          className="hidden md:flex absolute top-6 left-1/2 -translate-x-1/2 z-50
+                     w-10 h-10 rounded-full border border-black/10 bg-white/80
+                     backdrop-blur-sm shadow items-center justify-center
+                     text-gray-600 hover:text-black transition-colors"
           aria-label="Previous slide"
         >
-          ‹
+          ↑
         </button>
       )}
       {showNext && (
         <button
-          onClick={(e) => { e.stopPropagation(); onNext() }}
-          className="story-nav-chevron story-nav-chevron--right"
+          onClick={onNext}
+          className="hidden md:flex absolute bottom-6 left-1/2 -translate-x-1/2 z-50
+                     w-10 h-10 rounded-full border border-black/10 bg-white/80
+                     backdrop-blur-sm shadow items-center justify-center
+                     text-gray-600 hover:text-black transition-colors"
           aria-label="Next slide"
         >
-          ›
+          ↓
         </button>
       )}
     </>
